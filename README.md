@@ -21,7 +21,7 @@ A dark modern web dashboard designed for headless servers running containerized 
 ├── README.md              # Documentation
 └── templates/
     └── index.html         # Dark Modern Tailwind CSS single-page app
-
+```
 
 ## Quick Installation
 
