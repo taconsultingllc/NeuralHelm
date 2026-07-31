@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Model Controller</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0b0f19; color: #e2e8f0; font-family: system-ui, -apple-system, sans-serif; }
+    .glass { background: rgba(17, 24, 39, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .glow-green { box-shadow: 0 0 15px rgba(34, 197, 94, 0.3); }
+  </style>
+</head>
+<body class="min-h-screen p-6 md:p-10">
+  <div class="max-w-6xl mx-auto space-y-8">
+    
+    <!-- Header -->
+    <header class="flex justify-between items-center pb-6 border-b border-gray-800">
+      <div>
+        <h1 class="text-3xl font-extrabold tracking-tight text-white">Llama Cockpit <span class="text-indigo-500">Hub</span></h1>
+        <p class="text-sm text-gray-400 mt-1">Remote Container & Inference Manager</p>
+      </div>
+      <div id="status-badge" class="flex items-center gap-3 px-4 py-2 rounded-full glass border">
+        <span class="w-3 h-3 rounded-full bg-gray-500 animate-pulse"></span>
+        <span class="text-sm font-semibold tracking-wide text-gray-300">Checking Status...</span>
+      </div>
+    </header>
+
+	<!-- Main Content Layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+      
+      <!-- Top Left: Saved Model Commands (Scrolls internally if long) -->
+      <div class="glass rounded-2xl p-6 shadow-xl max-h-[520px] flex flex-col">
+        <div class="flex justify-between items-center mb-4 shrink-0">
+          <h2 class="text-xl font-bold text-white">Saved Model Commands</h2>
+          <button onclick="openModalForAdd()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition">
+            + Add Preset
+          </button>
+        </div>
+        <!-- Scrollable list wrapper -->
+        <div id="command-list" class="space-y-4 overflow-y-auto pr-2 custom-scrollbar">
+          <!-- Dynamic items loaded here -->
+        </div>
+      </div>
+
+      <!-- Top Right: Active Session Control (Fixed height, won't stretch) -->
+      <div class="glass rounded-2xl p-6 shadow-xl">
+        <h2 class="text-xl font-bold text-white mb-4">Active Session Control</h2>
+        <div id="active-info" class="text-sm text-gray-400 mb-6">
+          No active container running.
+        </div>
+        <button id="stop-btn" onclick="stopModel()" disabled class="w-full py-3 bg-red-600/20 text-red-400 border border-red-500/30 rounded-xl font-semibold opacity-50 cursor-not-allowed transition hover:bg-red-600 hover:text-white">
+          Stop Container
+        </button>
+      </div>
+
+    </div>
+
+      <!-- Bottom Center: Live Terminal Logs -->
+      <div class="lg:col-span-2 glass rounded-2xl p-6 shadow-xl">
+        <div class="flex justify-between items-center mb-4">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+            <h3 class="text-base font-semibold text-gray-200">Live Terminal Logs</h3>
+          </div>
+          <span class="text-xs text-gray-500 font-mono">Polling every 3s</span>
+        </div>
+        <pre id="log-output" class="bg-gray-950 p-4 rounded-xl text-xs font-mono text-emerald-400 h-80 overflow-y-auto leading-relaxed border border-gray-800 shadow-inner">Select or start a model to view logs...</pre>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Add/Edit Preset Modal -->
+  <div id="modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+    <div class="glass rounded-2xl p-6 w-full max-w-lg border border-gray-700 shadow-2xl">
+      <h3 id="modal-title" class="text-lg font-bold text-white mb-4">Add Model Command Preset</h3>
+      <input type="hidden" id="cmd-id">
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Preset Name</label>
+          <input id="cmd-name" type="text" placeholder="e.g. Qwen 35B High Context" class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-indigo-500">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Podman Command</label>
+          <textarea id="cmd-string" rows="5" placeholder="podman run --rm -d --name llama-cockpit-server..." class="w-full bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs font-mono text-white focus:outline-none focus:border-indigo-500"></textarea>
+        </div>
+      </div>
+      <div class="flex justify-end gap-3 mt-6">
+        <button onclick="toggleModal(false)" class="px-4 py-2 text-gray-400 hover:text-white text-sm">Cancel</button>
+        <button onclick="saveCommand()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium">Save Preset</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let activeCommands = [];
+
+    async function fetchCommands() {
+      const res = await fetch('/api/commands');
+      activeCommands = await res.json();
+      renderCommands();
+    }
+
+	function renderCommands() {
+      const list = document.getElementById('command-list');
+      list.innerHTML = activeCommands.map(c => `
+        <div class="relative p-4 pl-9 rounded-xl bg-gray-900/60 border border-gray-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 hover:border-gray-700 transition">
+          
+          <!-- Top-Left Red (X) Delete Button -->
+          <button onclick="deleteCommand('${c.id}')" title="Delete Preset" class="absolute top-3 left-3 text-red-500 hover:text-red-400 hover:bg-red-500/10 p-0.5 rounded transition">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          <!-- Content (Padded left so text doesn't hit the X icon) -->
+          <div class="overflow-hidden">
+            <h3 class="font-bold text-white">${c.name}</h3>
+            <p class="text-xs font-mono text-gray-400 mt-1 line-clamp-2 break-all">${c.command}</p>
+          </div>
+
+          <!-- Buttons: Launch & Edit -->
+          <div class="flex flex-row sm:flex-col gap-2 self-end sm:self-auto shrink-0 min-w-[80px]">
+            <button onclick="launchModel('${c.id}')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition">Launch</button>
+            <button onclick="openModalForEdit('${c.id}')" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white text-xs font-medium rounded-lg border border-gray-700 transition">Edit</button>
+          </div>
+
+        </div>
+      `).join('');
+    }
+
+    async function checkStatus() {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+      const badge = document.getElementById('status-badge');
+      const info = document.getElementById('active-info');
+      const stopBtn = document.getElementById('stop-btn');
+
+      if (data.running) {
+        badge.className = "flex items-center gap-3 px-4 py-2 rounded-full glass border border-emerald-500/40 glow-green";
+        badge.innerHTML = `<span class="w-3 h-3 rounded-full bg-emerald-500"></span><span class="text-sm font-semibold text-emerald-400">Online: ${data.name}</span>`;
+        info.innerHTML = `<p class="font-semibold text-white">Status: ${data.status}</p><p class="text-xs font-mono text-gray-400 mt-2 break-all">${data.image}</p>`;
+        stopBtn.disabled = false;
+        stopBtn.className = "w-full py-3 bg-red-600 text-white rounded-xl font-semibold shadow-lg hover:bg-red-500 transition";
+      } else {
+        badge.className = "flex items-center gap-3 px-4 py-2 rounded-full glass border border-gray-700";
+        badge.innerHTML = `<span class="w-3 h-3 rounded-full bg-gray-500"></span><span class="text-sm font-semibold text-gray-400">Offline</span>`;
+        info.innerText = "No active model container running.";
+        stopBtn.disabled = true;
+        stopBtn.className = "w-full py-3 bg-red-600/20 text-red-400 border border-red-500/30 rounded-xl font-semibold opacity-50 cursor-not-allowed";
+      }
+    }
+
+    async function fetchLogs() {
+      const res = await fetch('/api/logs');
+      const data = await res.json();
+      const logBox = document.getElementById('log-output');
+      logBox.innerText = data.logs;
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    async function launchModel(id) {
+      const item = activeCommands.find(c => c.id === id);
+      if (!item) return;
+      await fetch('/api/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({command: item.command})
+      });
+      checkStatus();
+    }
+
+    async function stopModel() {
+      await fetch('/api/stop', { method: 'POST' });
+      checkStatus();
+    }
+
+    function openModalForAdd() {
+      document.getElementById('modal-title').innerText = "Add Model Command Preset";
+      document.getElementById('cmd-id').value = "";
+      document.getElementById('cmd-name').value = "";
+      document.getElementById('cmd-string').value = "";
+      toggleModal(true);
+    }
+
+    function openModalForEdit(id) {
+      const item = activeCommands.find(c => c.id === id);
+      if (!item) return;
+      document.getElementById('modal-title').innerText = "Edit Model Command Preset";
+      document.getElementById('cmd-id').value = item.id;
+      document.getElementById('cmd-name').value = item.name;
+      document.getElementById('cmd-string').value = item.command;
+      toggleModal(true);
+    }
+
+    async function saveCommand() {
+      const id = document.getElementById('cmd-id').value;
+      const name = document.getElementById('cmd-name').value;
+      const command = document.getElementById('cmd-string').value;
+      if (!name || !command) return;
+
+      if (id) {
+        // Edit existing command
+        await fetch(`/api/commands/${id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name, command})
+        });
+      } else {
+        // Add new command
+        await fetch('/api/commands', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name, command})
+        });
+      }
+      
+      toggleModal(false);
+      fetchCommands();
+    }
+
+	async function deleteCommand(id) {
+      const item = activeCommands.find(c => c.id === id);
+      const name = item ? item.name : 'this preset';
+
+      // Confirmation prompt before proceeding with deletion
+      const confirmed = confirm(`Are you sure you want to delete "${name}"?`);
+      if (!confirmed) return;
+
+      await fetch(`/api/commands/${id}`, { method: 'DELETE' });
+      fetchCommands();
+    }
+
+    function toggleModal(show) {
+      document.getElementById('modal').classList.toggle('hidden', !show);
+    }
+	
+
+    // Polling loop
+    fetchCommands();
+    checkStatus();
+    fetchLogs();
+    setInterval(() => { checkStatus(); fetchLogs(); }, 3000);
+  </script>
+</body>
+</html>
